@@ -1,0 +1,74 @@
+#!/bin/bash
+
+#-- Modified a small bit by J.L. Lanfranchi from origial code at:
+#   https://help.ubuntu.com/community/OCR
+
+set -e
+
+
+TEMPF=$(mktemp -t pdfocr.XXXXXX)
+
+usage(){
+	echo "Usage: pdfocr FILENAME (START_PAGE (END_PAGE (MAX_PROCS)))
+  FILENAME is required.
+  The second argument is interpreted as start page and the third argument
+     is interpreted as end page, so there's no way to *only*
+	 specify an end page or *only* specify max_procs, or only specify
+	 start page and max procs (without specifying end page).
+  If END_PAGE is unspecified, it defaults to the last page of the PDF.
+  If START_PAGE is unspecified, defaults to first page of the PDF.
+  If MAX_PROCS is unspecified, defaults to 4."
+	exit 1
+}
+
+[[ $# -eq 0 ]] && usage
+
+
+START_PAGE=${2:-1}
+NUM_PAGES=$(pdfinfo $1  | grep "Pages" | awk '{print $2}')
+END_PAGE=${3:-${NUM_PAGES}}
+OUTPUT=`echo $1 | sed 's/\.[a-zA-Z]\+$//g' | sed 's/$/.txt/g'`
+RESOLUTION=600 # set to the resolution the scanner used (the higher, the better)
+MAX_PROCS=${4:-4}
+
+if [[ -f ${OUTPUT} ]]; then
+	rm -f ${OUTPUT}
+fi
+
+cleanup(){
+	for PAGE_NUM in `seq $START_PAGE $END_PAGE`; do
+		if [[ -f ${TEMPF}.page${PAGE_NUM}.tif ]]; then
+			rm -f ${TEMPF}.page${PAGE_NUM}.tif
+		fi
+		if [[ -f ${TEMPF}.page${PAGE_NUM}.txt ]]; then
+			rm -f ${TEMPF}.page${PAGE_NUM}.txt
+		fi
+	done
+}
+
+#trap cleanup EXIT
+
+PAGE_NUM=$START_PAGE
+while ((PAGE_NUM <= END_PAGE)); do
+	echo "Processing page ${PAGE_NUM}..."
+
+	#echo "convert -monochrome -density $RESOLUTION $1\[$(($PAGE_NUM - 1 ))\] \
+	#	${TEMPF}.page${PAGE_NUM}.tif && \
+	#tesseract ${TEMPF}.page${PAGE_NUM}.tif ${TEMPF}.page${PAGE_NUM} &"
+
+	convert -monochrome -density $RESOLUTION $1\[$(($PAGE_NUM - 1 ))\] ${TEMPF}.page${PAGE_NUM}.tif && tesseract ${TEMPF}.page${PAGE_NUM}.tif ${TEMPF}.page${PAGE_NUM} &
+
+	PAGE_NUM=$((PAGE_NUM+1))
+	while ((`jobs | wc -l` >= $MAX_PROCS)); do
+		sleep 0.5
+	done
+done
+
+#-- Wait for all OCR ops to finish
+wait
+
+#-- Concatenate all into one file
+for PAGE_NUM in `seq $START_PAGE $END_PAGE`; do
+	cat ${TEMPF}.page${PAGE_NUM}.txt >> $OUTPUT
+done
+echo "ALL done."
